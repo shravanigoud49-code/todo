@@ -1,301 +1,83 @@
-import tkinter as tk
-from tkinter import messagebox, ttk
-import mysql.connector
+import streamlit as st
+import pandas as pd
+from datetime import datetime
 
-# -------- DATABASE -------- #
-db = mysql.connector.connect(
-    host="localhost",
-    user="root",
-    password="8309802080",
-    database="grocery_db"
-)
-cursor = db.cursor(buffered=True)
+st.set_page_config(page_title="Smart Task Manager", layout="centered")
 
-# -------- GLOBALS -------- #
-cart = []
+# Title
+st.title("🧠 Smart Task Manager")
 
-# -------- FUNCTIONS -------- #
+# Initialize session state
+if "tasks" not in st.session_state:
+    st.session_state.tasks = []
 
-def clear_table():
-    for item in table.get_children():
-        table.delete(item)
+# ---------------- ADD TASK ----------------
+st.subheader("➕ Add New Task")
 
+task_name = st.text_input("Task Name")
+priority = st.selectbox("Priority", ["Low", "Medium", "High"])
+due_date = st.date_input("Due Date")
 
-def add_product():
-    name = entry_name.get()
-    price = entry_price.get()
-    qty = entry_qty.get()
-
-    if name == "" or price == "" or qty == "":
-        messagebox.showerror("Error", "Fill all fields")
-        return
-
-    cursor.execute(
-        "INSERT INTO products (name, price, quantity) VALUES (%s,%s,%s)",
-        (name, float(price), int(qty))
-    )
-    db.commit()
-
-    messagebox.showinfo("Success", "Product Added")
-
-    entry_name.delete(0, tk.END)
-    entry_price.delete(0, tk.END)
-    entry_qty.delete(0, tk.END)
-
-
-# -------- VIEW PRODUCTS -------- #
-
-def view_products():
-    clear_table()
-
-    table["columns"] = ("Name", "Price", "Quantity")
-    table["show"] = "headings"
-
-    for col in table["columns"]:
-        table.heading(col, text=col)
-        table.column(col, width=150)
-
-    cursor.execute("SELECT name, price, quantity FROM products")
-
-    for row in cursor.fetchall():
-        table.insert("", "end", values=row)
-
-
-def delete_product():
-    name = entry_name.get()
-    cursor.execute("DELETE FROM products WHERE name=%s", (name,))
-    db.commit()
-    messagebox.showinfo("Deleted", "Product Deleted")
-
-
-# -------- CART -------- #
-
-def add_to_cart():
-    name = entry_name.get()
-    qty = entry_qty.get()
-
-    if name == "" or qty == "":
-        messagebox.showerror("Error", "Enter product & quantity")
-        return
-
-    qty = int(qty)
-
-    cursor.execute("SELECT price, quantity FROM products WHERE name=%s", (name,))
-    result = cursor.fetchone()
-
-    if result:
-        price, stock = result
-
-        if qty > stock:
-            messagebox.showerror("Error", "Not enough stock")
-            return
-
-        total = price * qty
-        cart.append((name, price, qty, total))
-
-        messagebox.showinfo("Added", f"{name} added to cart")
+if st.button("Add Task"):
+    if task_name:
+        st.session_state.tasks.append({
+            "Task": task_name,
+            "Priority": priority,
+            "Due Date": due_date,
+            "Status": "Pending",
+            "Created": datetime.now().strftime("%Y-%m-%d %H:%M")
+        })
+        st.success("Task Added Successfully!")
     else:
-        messagebox.showerror("Error", "Product not found")
+        st.warning("Please enter task name")
 
+# ---------------- DISPLAY TASKS ----------------
+st.subheader("📋 Your Tasks")
 
-def view_cart():
-    clear_table()
+if st.session_state.tasks:
+    df = pd.DataFrame(st.session_state.tasks)
 
-    table["columns"] = ("Name", "Price", "Qty", "Total")
-    table["show"] = "headings"
+    # Filter
+    status_filter = st.selectbox("Filter by Status", ["All", "Pending", "Completed"])
 
-    for col in table["columns"]:
-        table.heading(col, text=col)
+    if status_filter != "All":
+        df = df[df["Status"] == status_filter]
 
-    for item in cart:
-        table.insert("", "end", values=item)
+    st.dataframe(df, use_container_width=True)
 
+    # ---------------- MARK COMPLETE ----------------
+    st.subheader("✅ Update Task Status")
 
-# -------- BILLING + CUSTOMER -------- #
+    task_index = st.selectbox("Select Task", range(len(st.session_state.tasks)))
 
-def generate_bill():
-    if not cart:
-        messagebox.showerror("Error", "Cart is empty")
-        return
+    if st.button("Mark as Completed"):
+        st.session_state.tasks[task_index]["Status"] = "Completed"
+        st.success("Task marked as completed!")
+        st.rerun()
 
-    phone = entry_phone.get()
+    # ---------------- DELETE TASK ----------------
+    st.subheader("🗑 Delete Task")
 
-    if phone == "":
-        messagebox.showerror("Error", "Enter phone number")
-        return
+    delete_index = st.selectbox("Select Task to Delete", range(len(st.session_state.tasks)), key="delete")
 
-    total_bill = 0
+    if st.button("Delete Task"):
+        st.session_state.tasks.pop(delete_index)
+        st.warning("Task deleted!")
+        st.rerun()
 
-    for item in cart:
-        name, price, qty, total = item
-        total_bill += total
+else:
+    st.info("No tasks added yet!")
 
-        cursor.execute(
-            "UPDATE products SET quantity = quantity - %s WHERE name=%s",
-            (qty, name)
-        )
+# ---------------- DOWNLOAD ----------------
+st.subheader("⬇ Download Tasks")
 
-        cursor.execute(
-            "INSERT INTO sales (name, quantity, total, date) VALUES (%s,%s,%s,NOW())",
-            (name, qty, total)
-        )
+if st.session_state.tasks:
+    df = pd.DataFrame(st.session_state.tasks)
+    csv = df.to_csv(index=False).encode("utf-8")
 
-        cursor.execute(
-            "INSERT INTO customers (phone, product, quantity, total) VALUES (%s,%s,%s,%s)",
-            (phone, name, qty, total)
-        )
-
-    db.commit()
-
-    messagebox.showinfo("Bill Generated", f"Total Bill = ₹{total_bill}")
-
-    cart.clear()
-
-
-# -------- SALES -------- #
-
-def view_sales():
-    clear_table()
-
-    table["columns"] = ("Name", "Quantity", "Total", "Date")
-    table["show"] = "headings"
-
-    for col in table["columns"]:
-        table.heading(col, text=col)
-
-    cursor.execute("SELECT name, quantity, total, date FROM sales ORDER BY date DESC")
-
-    for row in cursor.fetchall():
-        table.insert("", "end", values=row)
-
-
-# -------- CUSTOMER HISTORY -------- #
-
-def view_customer_history():
-    phone = entry_phone.get()
-
-    if phone == "":
-        messagebox.showerror("Error", "Enter phone number")
-        return
-
-    clear_table()
-
-    table["columns"] = ("Product", "Qty", "Total", "Date")
-    table["show"] = "headings"
-
-    for col in table["columns"]:
-        table.heading(col, text=col)
-
-    cursor.execute(
-        "SELECT product, quantity, total, date FROM customers WHERE phone=%s",
-        (phone,)
+    st.download_button(
+        label="Download as CSV",
+        data=csv,
+        file_name="tasks.csv",
+        mime="text/csv"
     )
-
-    data = cursor.fetchall()
-
-    if not data:
-        messagebox.showinfo("Info", "No history found")
-
-    for row in data:
-        table.insert("", "end", values=row)
-
-
-# -------- SEARCH -------- #
-
-def search_product():
-    name = entry_name.get()
-
-    clear_table()
-
-    table["columns"] = ("Name", "Price", "Quantity")
-    table["show"] = "headings"
-
-    for col in table["columns"]:
-        table.heading(col, text=col)
-
-    cursor.execute(
-        "SELECT name, price, quantity FROM products WHERE name LIKE %s",
-        ('%' + name + '%',)
-    )
-
-    for row in cursor.fetchall():
-        table.insert("", "end", values=row)
-
-
-# -------- LOW STOCK -------- #
-
-def check_low_stock_auto():
-    cursor.execute("SELECT name FROM products WHERE quantity < 5")
-    items = cursor.fetchall()
-
-    if items:
-        names = [i[0] for i in items]
-        messagebox.showwarning("Low Stock!", f"Low items: {', '.join(names)}")
-
-    root.after(15000, check_low_stock_auto)
-
-
-# -------- GUI -------- #
-
-root = tk.Tk()
-root.title("Grocery Management System")
-root.geometry("900x600")
-
-tk.Label(root, text="Grocery Management System",
-         font=("Arial", 16, "bold"),
-         bg="#2c3e50", fg="white").pack(fill="x")
-
-frame = tk.Frame(root)
-frame.pack(pady=10)
-
-# Inputs
-tk.Label(frame, text="Product Name").grid(row=0, column=0)
-entry_name = tk.Entry(frame)
-entry_name.grid(row=0, column=1)
-
-tk.Label(frame, text="Price").grid(row=1, column=0)
-entry_price = tk.Entry(frame)
-entry_price.grid(row=1, column=1)
-
-tk.Label(frame, text="Quantity").grid(row=2, column=0)
-entry_qty = tk.Entry(frame)
-entry_qty.grid(row=2, column=1)
-
-tk.Label(frame, text="Phone Number").grid(row=3, column=0)
-entry_phone = tk.Entry(frame)
-entry_phone.grid(row=3, column=1)
-
-# Buttons
-btn_frame = tk.Frame(frame)
-btn_frame.grid(row=4, column=0, columnspan=2, pady=10)
-
-w = 15
-
-tk.Button(btn_frame, text="Add Product", width=w, command=add_product).grid(row=0, column=0)
-tk.Button(btn_frame, text="View Products", width=w, command=view_products).grid(row=0, column=1)
-
-tk.Button(btn_frame, text="Delete", width=w, command=delete_product).grid(row=1, column=0)
-tk.Button(btn_frame, text="Add to Cart", width=w, command=add_to_cart).grid(row=1, column=1)
-
-tk.Button(btn_frame, text="View Cart", width=w, command=view_cart).grid(row=2, column=0)
-tk.Button(btn_frame, text="Generate Bill", width=w, command=generate_bill).grid(row=2, column=1)
-
-tk.Button(btn_frame, text="Search", width=w, command=search_product).grid(row=3, column=0)
-tk.Button(btn_frame, text="Sales Report", width=w, command=view_sales).grid(row=3, column=1)
-
-tk.Button(btn_frame, text="Customer History", width=w,
-          command=view_customer_history).grid(row=4, column=0)
-
-# Table
-table = ttk.Treeview(root)
-table.pack(fill="both", expand=True)
-
-# Style
-style = ttk.Style()
-style.configure("Treeview", rowheight=28, font=("Arial", 11))
-style.configure("Treeview.Heading", font=("Arial", 12, "bold"))
-
-# Auto alert
-check_low_stock_auto()
-
-root.mainloop()
